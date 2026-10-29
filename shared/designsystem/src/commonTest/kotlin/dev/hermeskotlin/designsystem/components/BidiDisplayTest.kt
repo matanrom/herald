@@ -116,7 +116,7 @@ class BidiDisplayTest {
 
     @Test
     fun aHebrewOrArabicTextIsLaidOutRightToLeft() {
-        assertEquals(TextDirection.Rtl, BidiText.direction("בדוק את auto_prune תחת checkpoints"))
+        assertEquals(TextDirection.Rtl, BidiText.direction("בדוק כל יום אם auto_prune פעיל"))
         assertEquals(TextDirection.Rtl, BidiText.direction("شكراً على الشرح"))
     }
 

@@ -35,7 +35,11 @@ private fun ClipEntry.withoutInsertedIsolation(): ClipEntry {
     }
     if (!changed) return this
     val description = source.description
-    val mimeTypes = description.mimeTypeArray ?: arrayOf("text/plain")
+    val mimeTypes = if (description.mimeTypeCount > 0) {
+        Array(description.mimeTypeCount) { description.getMimeType(it) }
+    } else {
+        arrayOf("text/plain")
+    }
     return ClipEntry(
         ClipData(description.label ?: "text", mimeTypes, items.first()).also { rebuilt ->
             items.drop(1).forEach(rebuilt::addItem)
