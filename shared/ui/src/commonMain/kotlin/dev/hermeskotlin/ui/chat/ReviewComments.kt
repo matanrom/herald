@@ -1,6 +1,7 @@
 package dev.hermeskotlin.ui.chat
 
 import androidx.compose.foundation.text.input.TextFieldState
+import dev.hermeskotlin.designsystem.components.BidiDisplay
 import dev.hermeskotlin.designsystem.components.TextHighlight
 
 /** Something in the chat a comment can be about, named the way the message to the agent names it. */
@@ -42,6 +43,22 @@ data class SelectionAnchor(val blocks: List<String>, val startBlock: Int, val st
         /** All of [text]. */
         fun whole(text: String) = SelectionAnchor(listOf(text), 0, 0, 0, text.length)
     }
+}
+
+/**
+ * The selection a menu hands a comment, in the text as it was written: a reply laid out right to left is drawn
+ * with isolate characters between its runs, and [blocks] and [start]…[end] count those as characters. Comments,
+ * quotes and highlights are about the words, so the blocks go back to what the agent sent.
+ */
+internal fun rawAnchor(blocks: List<String>, startBlock: Int, start: Int, endBlock: Int, end: Int): SelectionAnchor {
+    val shown = blocks.map(BidiDisplay::of)
+    return SelectionAnchor(
+        blocks = shown.map { it.raw },
+        startBlock = startBlock,
+        start = shown[startBlock].rawIndex(start),
+        endBlock = endBlock,
+        end = shown[endBlock].rawIndex(end),
+    )
 }
 
 /** What the selection menu offers besides Copy. */

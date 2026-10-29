@@ -162,7 +162,7 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier, streaming: Boolean
     }
     // An Arabic reply is laid out right to left as a whole (ordered, and start-aligned, from the right);
     // anything else falls back to Content, so each block follows its own first strong character.
-    val direction = remember(text) { if (Bidi.prefersRightToLeft(text)) TextDirection.Rtl else TextDirection.Content }
+    val direction = remember(text) { BidiText.direction(text) }
     val replyStyle = Theme[typography][body].copy(color = Theme[colors][textColor], textDirection = direction)
     val compact = compactStyle(replyStyle, textStyle)
     val bodyStyle = compact ?: replyStyle
@@ -444,9 +444,12 @@ private fun CodeBlock(code: String, language: String?, style: TextStyle) {
             CopyPill(code)
         }
         val scroll = if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState())
-        Box(Modifier.fillMaxWidth().then(scroll).padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp)) {
-            // Code is always laid out left to right, even under an Arabic paragraph around it.
-            BasicText(text, style = style.copy(textDirection = TextDirection.Ltr), softWrap = wrap)
+        // Code is always laid out left to right, even under an Arabic paragraph around it: both the text and
+        // the viewport it scrolls in, so a long line starts at its left edge under a Hebrew device locale too.
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Box(Modifier.fillMaxWidth().then(scroll).padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp)) {
+                BasicText(text, style = style.copy(textDirection = TextDirection.Ltr), softWrap = wrap)
+            }
         }
     }
 }

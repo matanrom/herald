@@ -227,7 +227,7 @@ internal object Bidi {
         return rtl > ltr
     }
 
-    private fun isRightToLeft(c: Char): Boolean = when (c) {
+    internal fun isRightToLeft(c: Char): Boolean = when (c) {
         in '\u0590'..'\u05FF', // Hebrew
         in '\u0600'..'\u06FF', // Arabic
         in '\u0700'..'\u074F', // Syriac
@@ -239,7 +239,7 @@ internal object Bidi {
         else -> false
     }
 
-    private fun isLeftToRight(c: Char): Boolean =
+    internal fun isLeftToRight(c: Char): Boolean =
         c in 'A'..'Z' || c in 'a'..'z' || c in '\u00C0'..'\u024F' || c in '\u0370'..'\u058F'
 
     /** Inner characters of a run: what a path, URL, identifier, date, version or amount is made of. */

@@ -265,6 +265,7 @@ import dev.hermeskotlin.designsystem.body
 import dev.hermeskotlin.designsystem.bodySmall
 import dev.hermeskotlin.designsystem.caption
 import dev.hermeskotlin.designsystem.colors
+import dev.hermeskotlin.designsystem.components.BidiText
 import dev.hermeskotlin.designsystem.components.Button
 import dev.hermeskotlin.designsystem.components.ButtonSize
 import dev.hermeskotlin.designsystem.components.ButtonVariant
@@ -1839,7 +1840,13 @@ private fun UserBubble(
                         if (message.attachments.isNotEmpty()) SentAttachments(message.attachments)
                         when {
                             review != null -> SentReviewContent(review, onBubble)
-                            message.text.isNotEmpty() -> Text(message.text, style = Theme[typography][body], color = onBubble)
+                            // A prompt takes its direction from what was typed, so a Hebrew one reads right to left
+                            // without its text ever being changed.
+                            message.text.isNotEmpty() -> Text(
+                                message.text,
+                                style = Theme[typography][body].copy(textDirection = BidiText.direction(message.text)),
+                                color = onBubble,
+                            )
                         }
                     }
                 }
@@ -2921,7 +2928,10 @@ private fun Composer(
                     if (attachments.isNotEmpty()) ComposerTray(attachments, onRemove = actions::removeAttachment)
                     UnstyledTextField(
                         state = actions.composer,
-                        textStyle = Theme[typography][body],
+                        // Style only: the draft reads in the direction of what's been typed so far, and the field
+                        // goes back to following each string on its own once it's empty. Nothing is inserted into
+                        // the text, so what's sent, undone and copied is exactly what was typed.
+                        textStyle = Theme[typography][body].copy(textDirection = BidiText.direction(actions.composer.text.toString())),
                         textColor = Theme[colors][textColor],
                         cursorBrush = SolidColor(Theme[colors][accent]),
                         // UnstyledTextField defaults to unspecified colors, which hides the selection and its handles.
