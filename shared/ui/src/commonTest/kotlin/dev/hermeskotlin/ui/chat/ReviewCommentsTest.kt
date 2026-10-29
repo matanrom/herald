@@ -130,6 +130,39 @@ class ReviewCommentsTest {
     }
 
     @Test
+    fun aSelectionInAReplyDrawnWithIsolatesIsQuotedAsWritten() {
+        // A Hebrew reply draws its inline code inside isolate characters; the comment is about the words.
+        val written = "הפעל את `hermes update` ואז בדוק"
+        val drawn = "הפעל את `\u2066hermes update\u2069` ואז בדוק"
+        val anchor = rawAnchor(listOf(drawn), 0, drawn.indexOf('\u2066'), 0, drawn.indexOf('\u2069') + 1)
+        assertEquals(listOf(written), anchor.blocks)
+        assertEquals(written.indexOf("hermes"), anchor.start)
+        assertEquals(written.indexOf("hermes") + "hermes update".length, anchor.end)
+        assertEquals("hermes update", anchor.text)
+        assertEquals(listOf(TextHighlight(written, anchor.start, anchor.end)), anchor.highlights)
+        assertEquals("הפעל את `«hermes update»` ואז בדוק", newComment(1, reply, anchor).context)
+    }
+
+    @Test
+    fun aSelectionAcrossBlocksConvertsEachOneItCovers() {
+        val written = listOf("בדוק את auto_prune", "הרץ `hermes update`")
+        val drawn = listOf("בדוק את \u2066auto_prune\u2069", "הרץ `\u2066hermes update\u2069`")
+        val start = drawn[0].indexOf('\u2066')
+        val end = drawn[1].indexOf('\u2069')
+        val anchor = rawAnchor(drawn, 0, start, 1, end)
+        assertEquals(written, anchor.blocks)
+        assertEquals(written[0].indexOf("auto_prune"), anchor.start)
+        assertEquals(written[1].indexOf("hermes") + "hermes update".length, anchor.end)
+        assertEquals("auto_prune\nהרץ `hermes update", anchor.text)
+    }
+
+    @Test
+    fun textWithoutIsolatesKeepsTheAnchorItHad() {
+        val anchor = rawAnchor(blocks, 3, 30, 3, 35)
+        assertEquals(SelectionAnchor(blocks, 3, 30, 3, 35), anchor)
+    }
+
+    @Test
     fun openingWordsDropMarkdownAndStopAfterEightWords() {
         assertEquals("Here's the plan for the sync worker you…", openingWords("## **Here's** the plan for the sync worker you asked about"))
     }

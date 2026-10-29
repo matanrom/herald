@@ -166,4 +166,27 @@ class BidiTest {
         assertTrue(out.contains("${lri}home/data$pdi"))
         assertTrue(out.startsWith("المجلد"))
     }
+
+    // MARK: what leaves the screen is the text as it was written
+
+    @Test
+    fun nothingAddedForTheLayoutIsLeftInTheCopiedText() {
+        val input = "הפעל את `hermes update` ואז בדוק 2026-11-20 תחת /root/.hermes/config.yaml"
+        val shown = Bidi.isolateLtrRuns(Bidi.isolateInlineCode(input))
+        assertTrue(shown.contains(lri))
+        assertEquals(input, BidiText.withoutInsertedIsolation(shown))
+    }
+
+    @Test
+    fun strippingTwiceChangesNothing() {
+        val shown = Bidi.isolateLtrRuns(Bidi.isolateInlineCode("בדוק את `hermes update` עכשיו"))
+        val once = BidiText.withoutInsertedIsolation(shown)
+        assertEquals(once, BidiText.withoutInsertedIsolation(once))
+    }
+
+    @Test
+    fun aControlCharacterTheAuthorWroteIsNotStripped() {
+        val authored = "\u200Fשלום\u200E, \u202Bمرحبا\u202C ו-${lri}مرحبا بك$pdi"
+        assertEquals(authored, BidiText.withoutInsertedIsolation(authored))
+    }
 }
