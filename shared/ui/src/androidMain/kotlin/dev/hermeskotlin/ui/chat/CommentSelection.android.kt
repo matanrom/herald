@@ -5,13 +5,11 @@ import androidx.compose.foundation.text.contextmenu.modifier.appendTextContextMe
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.SelectionState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.SaverScope
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.AnnotatedString
 
 @Composable
@@ -19,31 +17,26 @@ internal actual fun PlatformCommentableSelection(
     onAction: ((SelectionAction, SelectionAnchor) -> Unit)?,
     content: @Composable () -> Unit,
 ) {
-    // Copy is the platform's own item here, so the clipboard — not each menu action — is where a selection that
-    // was drawn with isolate characters goes back to the words the agent wrote.
-    val clipboard = LocalClipboard.current
-    val safe = remember(clipboard) { bidiSafeClipboard(clipboard) }
-    CompositionLocalProvider(LocalClipboard provides safe) {
-        if (onAction == null) {
-            SelectionContainer(content = content)
-            return@CompositionLocalProvider
-        }
-        val latestOnAction by rememberUpdatedState(onAction)
-        val state = remember { SelectionState() }
-        SelectionContainer(
-            state = state,
-            modifier = Modifier.appendTextContextMenuComponents {
-                SelectionAction.entries.forEach { action ->
-                    item(key = action, label = action.label) {
-                        anchorOf(state)?.let { latestOnAction(action, it) }
-                        state.clear()
-                        close()
-                    }
-                }
-            },
-            content = content,
-        )
+    // The renderer never adds layout characters. Native Copy must use the platform clipboard unchanged.
+    if (onAction == null) {
+        SelectionContainer(content = content)
+        return
     }
+    val latestOnAction by rememberUpdatedState(onAction)
+    val state = remember { SelectionState() }
+    SelectionContainer(
+        state = state,
+        modifier = Modifier.appendTextContextMenuComponents {
+            SelectionAction.entries.forEach { action ->
+                item(key = action, label = action.label) {
+                    anchorOf(state)?.let { latestOnAction(action, it) }
+                    state.clear()
+                    close()
+                }
+            }
+        },
+        content = content,
+    )
 }
 
 private val SelectionAction.label: String
@@ -82,7 +75,7 @@ private fun anchorOf(state: SelectionState): SelectionAnchor? {
     val start = if (offset != null && fits(blocks, selected, startBlock, offset)) offset else guess(startBlock)
     val endBlock = startBlock + selected.size - 1
     val end = if (selected.size == 1) start + first.length else selected.last().length
-    // The blocks are drawn with the isolate characters a right-to-left reply gets; a comment is about the words.
+    // Style-only direction leaves original block text and offsets intact, including authored controls.
     return rawAnchor(blocks, startBlock, start, endBlock, end)
 }
 

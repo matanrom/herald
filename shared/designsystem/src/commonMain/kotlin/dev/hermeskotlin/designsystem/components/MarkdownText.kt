@@ -155,11 +155,8 @@ internal fun DefaultMarkdownTypography.withTextStyle(style: TextStyle?): Default
  */
 @Composable
 fun MarkdownText(text: String, modifier: Modifier = Modifier, streaming: Boolean = false, textStyle: TextStyle? = null) {
-    val prepared = remember(text) {
-        val parsed = Bidi.isolateInlineCode(MathMarkup.prepare(text))
-        // An Arabic sentence also needs the dates, amounts, identifiers and URLs inside it kept whole.
-        if (Bidi.prefersRightToLeft(text)) Bidi.isolateLtrRuns(parsed) else parsed
-    }
+    // Never inject layout characters into parser input: every selectable surface shares this path.
+    val prepared = remember(text) { prepareMarkdown(text) }
     // An Arabic reply is laid out right to left as a whole (ordered, and start-aligned, from the right);
     // anything else falls back to Content, so each block follows its own first strong character.
     val direction = remember(text) { BidiText.direction(text) }
