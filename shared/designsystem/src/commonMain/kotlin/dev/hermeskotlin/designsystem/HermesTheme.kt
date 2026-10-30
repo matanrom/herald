@@ -14,7 +14,7 @@ import com.composeunstyled.theme.buildThemeV2
 // Body text sits a hair tighter than the default, as the design's -0.005em does.
 // Content: every string takes its base direction from its own first strong character, so Arabic reads
 // right to left — ordered and start-aligned — while English sentences are untouched.
-private val baseText = TextStyle(fontFamily = Geist, letterSpacing = (-0.005).em, textDirection = TextDirection.Content)
+private val baseText = TextStyle(fontFamily = Geist, letterSpacing = (-0.005).em)
 
 /** Dark with true black backgrounds, for OLED screens. */
 val PureBlack = ColorScheme("pure_black")
