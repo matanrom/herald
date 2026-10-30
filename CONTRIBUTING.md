@@ -10,7 +10,7 @@ Thanks for helping. Bug fixes, missing gateway features and UI polish are all we
 
 ## Setup
 
-You need JDK 17+ (Android Studio's bundled JBR works) and the Android SDK with API 37. You also need a Hermes gateway to test against: your own, or a throwaway one.
+You need JetBrains Runtime 25 (Android Studio's bundled JBR is one; Gradle downloads it when none is found) and the Android SDK with API 37. You also need a Hermes gateway to test against: your own, or a throwaway one.
 
 ```bash
 ./gradlew :androidApp:installDebug
@@ -35,7 +35,7 @@ Add a test with every behaviour change. A bug fix should come with a test that f
 Before you push, run what CI runs:
 
 ```bash
-./gradlew --continue :shared:core:testAndroidHostTest :shared:designsystem:testAndroidHostTest :shared:ui:testAndroidHostTest :androidApp:assembleDebug :androidApp:lintDebug
+./gradlew --continue :shared:core:testAndroidHostTest :shared:designsystem:testAndroidHostTest :shared:ui:testAndroidHostTest :shared:wearlink:testAndroidHostTest :androidApp:assembleDebug :androidApp:assembleDev :androidApp:lintDebug :wearApp:testDebugUnitTest :wearApp:assembleDebug :wearApp:lintDebug
 ```
 
 Lint fails on any new issue. Fix it instead of adding it to `lint-baseline.xml`.
@@ -52,6 +52,17 @@ Unit tests aren't enough for anything you can see or that talks to the gateway. 
 For a PR that changes the UI, add before/after screenshots **to the PR description**. Don't commit them to the repo.
 
 Never show private data: no real chats, prompts, scheduled jobs, bots or gateway addresses. Use a test gateway, or the debug `PreviewGalleryActivity`, which draws each screen from sample data (see the README).
+
+## Website
+
+The landing page at [kyllene.app](https://kyllene.app) is the static site in `website/`: plain HTML and CSS, no build
+step. Preview it with any static server, for example `npx http-server website`, and check it at 375 px wide as well as
+on a desktop. Its screenshots are copies from `docs/screenshots`, so the same rules apply. Maintainers deploy it to
+Cloudflare Pages by hand:
+
+```bash
+npx wrangler pages deploy website --project-name kyllene --branch master
+```
 
 ## Pull requests
 
