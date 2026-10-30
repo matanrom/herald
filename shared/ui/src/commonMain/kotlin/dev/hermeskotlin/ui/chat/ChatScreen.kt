@@ -2870,7 +2870,8 @@ internal fun ComposerTextInput(
     // Box does not propagate the field's width to it. Giving the input the full viewport and anchoring its
     // content to the draft's side is what puts the text at the right of a wide field. Both are needed; either
     // alone leaves the text box at the left.
-    val placement = BidiText.placement(text, LocalLayoutDirection.current)
+    val ambient = LocalLayoutDirection.current
+    val placement = BidiText.placement(text, ambient)
     CompositionLocalProvider(LocalLayoutDirection provides placement) {
         UnstyledTextField(
             state = state,

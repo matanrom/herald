@@ -61,7 +61,6 @@ import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
-import com.mikepenz.markdown.compose.elements.MarkdownParagraph
 import com.mikepenz.markdown.compose.elements.MarkdownText as LibraryMarkdownText
 import dev.hermeskotlin.designsystem.accent
 import org.intellij.markdown.ast.ASTNode
@@ -363,29 +362,37 @@ private fun HighlightedParagraph(content: String, node: ASTNode) {
         DisplayFormula(display, math)
         return
     }
-    val highlights = LocalTextHighlights.current
-    // Placement comes from this paragraph's own text, never the whole reply: a short Hebrew block is a narrow
-    // text box, so it needs the full reply width *and* a right-anchored start to sit at the right margin. An
-    // English paragraph inside a Hebrew-heavy reply still starts at the left, and a neutral block keeps the
-    // ambient side. Neither the width nor the direction alone moves the text: both are needed.
-    val style = LocalMarkdownTypography.current.paragraph.copy(textDirection = BidiText.direction(content))
-    CompositionLocalProvider(LocalLayoutDirection provides BidiText.placement(content, LocalLayoutDirection.current)) {
-        if (highlights.isEmpty()) {
-            MarkdownParagraph(content, node, modifier = Modifier.fillMaxWidth(), style = style)
-        } else {
-            val settings = annotatorSettings()
-            val color = highlightColor()
-            val text = remember(content, node, style, settings, highlights, color) {
-                buildAnnotatedString {
-                    pushStyle(style.toSpanStyle())
-                    buildMarkdownAnnotatedString(content, node, settings)
-                    pop()
-                }.withHighlights(highlights, color)
-            }
-            // The library's link wrapper draws a content-sized leaf in a Box, so the paragraph's own layout
-            // direction is what anchors that leaf on the right; the width alone would not.
-            LibraryMarkdownText(text, node, modifier = Modifier.fillMaxWidth(), style = style)
+    // One build of this paragraph's own rendered text, used by both branches: direction and placement come from
+    // what is drawn here, never from the whole reply (which the library hands to every block component) and
+    // never from link destinations. A short Hebrew block is a narrow text box, so it needs the full reply width
+    // *and* a right-anchored start to sit at the right margin; neither alone moves it. An English paragraph
+    // inside a Hebrew-heavy reply keeps the left, and a neutral block keeps the ambient side.
+    val base = LocalMarkdownTypography.current.paragraph
+    val settings = annotatorSettings()
+    val annotated = remember(content, node, base, settings) {
+        buildAnnotatedString {
+            pushStyle(base.toSpanStyle())
+            buildMarkdownAnnotatedString(content, node, settings)
+            pop()
         }
+    }
+    val highlights = LocalTextHighlights.current
+    val color = highlightColor()
+    val text = remember(annotated, highlights, color) { annotated.withHighlights(highlights, color) }
+    val rendered = text.text
+    val style = base.copy(textDirection = BidiText.direction(rendered))
+    // The library's link wrapper draws a content-sized leaf inside a Box, so the paragraph's own layout
+    // direction is what anchors that leaf on the right; the width alone would not.
+    val ambient = LocalLayoutDirection.current
+    CompositionLocalProvider(LocalLayoutDirection provides BidiText.placement(rendered, ambient)) {
+        LibraryMarkdownText(
+            text,
+            node,
+            modifier = Modifier.fillMaxWidth(),
+            style = style,
+            // Block images still resolve against the paragraph's original source.
+            sourceContent = content,
+        )
     }
 }
 
