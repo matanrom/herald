@@ -54,7 +54,7 @@ jobs:
           test ! -e .git/MERGE_HEAD || { echo "::error::merge checkout, not an exact revision"; exit 1; }
           test -z "$(git status --porcelain)" || { echo "::error::dirty worktree"; git status --porcelain; exit 1; }
           # Nothing but this workflow file may separate the build from the source-reviewed revision.
-          audited=19f4834f9e63497ac44f266f082ad5ad72038c5c
+          audited=356e2d993552b77e5b51019caf8bf74680685664
           if ! git cat-file -e "${audited}^{commit}" 2>/dev/null; then
             git fetch --no-tags --depth=1 origin "$audited" >/dev/null 2>&1 || true
           fi
