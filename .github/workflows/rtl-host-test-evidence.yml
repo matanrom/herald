@@ -1,0 +1,52 @@
+# Throwaway evidence fixture for the RTL branch: runs only the new host tests and prints their
+# JUnit results. It is not part of the change proposed upstream.
+name: RTL host test evidence
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: jetbrains
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Composer RTL tests
+        run: >
+          ./gradlew --no-daemon --continue --console=plain
+          :shared:ui:testAndroidHostTest --tests '*ComposerRtlLayoutTest*'
+      - name: Designsytem RTL tests
+        run: >
+          ./gradlew --no-daemon --continue --console=plain
+          :shared:designsystem:testAndroidHostTest
+          --tests '*MarkdownRtlLayoutTest*' --tests '*BidiStyleTest*' --tests '*RtlIntegrityTest*'
+      - name: Print results
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          total = fail = err = skip = 0
+          for path in sorted(glob.glob('shared/*/build/test-results/**/*.xml', recursive=True)):
+              root = ET.parse(path).getroot()
+              for suite in ([root] if root.tag == 'testsuite' else root.findall('testsuite')):
+                  total += int(suite.get('tests', 0)); fail += int(suite.get('failures', 0))
+                  err += int(suite.get('errors', 0)); skip += int(suite.get('skipped', 0))
+                  print(f"{suite.get('name')}: tests={suite.get('tests')} failures={suite.get('failures')} errors={suite.get('errors')} skipped={suite.get('skipped')}")
+                  for case in suite.findall('testcase'):
+                      bad = case.find('failure') is not None or case.find('error') is not None
+                      print(f"  {'FAIL' if bad else 'PASS'} {case.get('classname')}.{case.get('name')}")
+          print(f"TOTAL tests={total} failures={fail} errors={err} skipped={skip}")
+          PY
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rtl-host-test-results
+          path: |
+            shared/*/build/test-results/**/*.xml
+            shared/*/build/rtl-geometry/*.txt

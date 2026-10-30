@@ -10,12 +10,25 @@ kotlin {
         namespace = "dev.hermeskotlin.designsystem"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
-        withHostTest {}
+        // The RTL layout harness renders the real components under Robolectric, so the host test needs the
+        // module's merged Android resources (the bundled Geist fonts) rather than stubs.
+        withHostTest { isIncludeAndroidResources = true }
         // For the bundled Geist fonts in res/font (license: GEIST-OFL.txt).
         androidResources { enable = true }
     }
+    // The desktop app (experimental). Lambdas as classes, which the app's warm-up loads ahead (see shared/ui).
+    jvm {
+        compilerOptions { freeCompilerArgs.add("-Xlambdas=class") }
+    }
 
     sourceSets {
+        jvmMain {
+            // The same Geist files, loaded from the classpath.
+            resources.srcDir("src/androidMain/res/font")
+            dependencies {
+                implementation(libs.jlatexmath)
+            }
+        }
         commonMain.dependencies {
             api(libs.compose.runtime)
             api(libs.compose.foundation)
@@ -32,6 +45,12 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
+        }
+        // Rendered RTL layout tests: Robolectric hosts the real Compose measurement and pixels.
+        getByName("androidHostTest").dependencies {
+            implementation(libs.junit4)
+            implementation(libs.robolectric)
+            implementation(libs.compose.ui.test.junit4)
         }
     }
 }
