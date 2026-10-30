@@ -44,6 +44,10 @@ data class SelectionAnchor(val blocks: List<String>, val startBlock: Int, val st
     }
 }
 
+/** Direction is style-only: selection text, authored controls and UTF-16 offsets pass through unchanged. */
+internal fun rawAnchor(blocks: List<String>, startBlock: Int, start: Int, endBlock: Int, end: Int): SelectionAnchor =
+    SelectionAnchor(blocks, startBlock, start, endBlock, end)
+
 /** What the selection menu offers besides Copy. */
 enum class SelectionAction { Comment, Explain, AskAside }
 

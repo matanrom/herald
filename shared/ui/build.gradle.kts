@@ -10,7 +10,9 @@ kotlin {
         namespace = "dev.hermeskotlin.ui"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
-        withHostTest {}
+        // The RTL layout harness renders the real components under Robolectric, so the host test needs the
+        // module's merged Android resources (the app's fonts and theme) rather than stubs.
+        withHostTest { isIncludeAndroidResources = true }
     }
 
     sourceSets {
@@ -35,6 +37,12 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.mock)
+        }
+        // Rendered RTL layout tests: Robolectric hosts the real Compose measurement and pixels.
+        getByName("androidHostTest").dependencies {
+            implementation(libs.junit4)
+            implementation(libs.robolectric)
+            implementation(libs.compose.ui.test.junit4)
         }
     }
 }

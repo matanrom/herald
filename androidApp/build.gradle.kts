@@ -99,6 +99,16 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
+        // "Herald RTL Test": a content-right-to-left build for trying Hebrew and Arabic replies on a phone. It
+        // installs beside the official app with its own id, data and sign-in, and is signed with the debug key
+        // (an ephemeral one in CI), so it can never be taken for an official update of Herald.
+        create("rtl") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".matanrtl"
+            versionNameSuffix = "-matan-rtl"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
     }
 }
 

@@ -1,0 +1,327 @@
+# Builds the "Herald RTL Test" phone APK (`:androidApp:assembleRtl`, appVersion 0.13.0) from an EXACT,
+# manually authorized source revision, and uploads the APK plus its build provenance.
+#
+# Triggered by a push to this feature branch or by hand (workflow_dispatch). It always builds
+# github.sha — never the PR merge tree — and verifies HEAD == github.sha before compiling.
+# Read-only: contents: read, no secrets other than the local test signing keystore, no releases,
+# no upstream writes.
+#
+# Signing: the RTL build type uses the debug signing config. This workflow restores a DURABLE test
+# keystore (repo secret RTL_TEST_DEBUG_KEYSTORE_BASE64) to ~/.android/debug.keystore so later RTL test
+# APKs install over this one. The expected certificate SHA-256 is pinned below; a mismatch fails the
+# build instead of shipping an APK that cannot be updated in place.
+name: RTL test APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/hebrew-rtl-test-apk]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rtl-test-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_VERSION: "0.13.0"
+  EXPECTED_CERT_SHA256: "67916000231b9e9dca20ee7bddd23b549b0ba23b4f277a00290396af16640ad4"
+
+jobs:
+  rtl-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # Pinned to commits, not tags, so a moved tag can't change what runs here.
+      # depth 2: the parent is the audited source revision this workflow is allowed to build from.
+      - name: Check out the exact triggering revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          tree_sha="$(git rev-parse HEAD^{tree})"
+          echo "github.sha = $GITHUB_SHA"
+          echo "HEAD       = $head_sha"
+          echo "tree       = $tree_sha"
+          test "$head_sha" = "$GITHUB_SHA" || { echo "::error::HEAD is not github.sha"; exit 1; }
+          test ! -e .git/MERGE_HEAD || { echo "::error::merge checkout, not an exact revision"; exit 1; }
+          test -z "$(git status --porcelain)" || { echo "::error::dirty worktree"; git status --porcelain; exit 1; }
+          # Nothing but this workflow file may separate the build from the source-reviewed revision.
+          audited=c273b652ff758101a12147193432e67d0a15fc2f
+          if ! git cat-file -e "${audited}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$audited" >/dev/null 2>&1 || true
+          fi
+          if git cat-file -e "${audited}^{commit}" 2>/dev/null; then
+            changed="$(git diff --name-only "$audited" HEAD)"
+            echo "changed since audited source $audited:"; echo "$changed"
+            test "$changed" = ".github/workflows/rtl-test-apk.yml" || {
+              echo "::error::build differs from the audited source beyond the workflow file"; exit 1; }
+            echo "audited_source_sha=$audited" >> "$GITHUB_ENV"
+          else
+            echo "::error::cannot reach the audited revision $audited to prove what was built"
+            exit 1
+          fi
+          {
+            echo "source_sha=$head_sha"
+            echo "source_tree=$tree_sha"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # Durable test signing key: outside the repo, outside the artifact. Restored to the location the
+      # Android plugin's debug signing config reads. A missing secret fails rather than producing an APK
+      # that no later test build could replace.
+      - name: Restore durable RTL test signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RTL_TEST_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::RTL_TEST_DEBUG_KEYSTORE_BASE64 is not set; refusing to build with an ephemeral key"
+            exit 1
+          fi
+          mkdir -p "$HOME/.android"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey \
+            | grep -E '^(Alias name|Valid from|SHA256)' | sed 's/^[ \t]*//'
+
+      - name: Test, build and lint the exact revision
+        run: |
+          set -euo pipefail
+          # The repo's lint gate is lintDebug for the phone app; prefer the RTL variant's lint when the
+          # Android plugin provides it.
+          ./gradlew --no-daemon -q :androidApp:tasks --all > "$RUNNER_TEMP/tasks.txt"
+          lint_task=:androidApp:lintDebug
+          if grep -qE '^lintRtl( |$)' "$RUNNER_TEMP/tasks.txt"; then lint_task=:androidApp:lintRtl; fi
+          echo "lint task: $lint_task"
+          # No -PreleasesRepo: this is a local test build with no updater and no ABI splits.
+          ./gradlew --no-daemon --continue -PappVersion="$APP_VERSION" \
+            :shared:designsystem:testAndroidHostTest \
+            :shared:ui:testAndroidHostTest \
+            :androidApp:assembleRtl \
+            "$lint_task" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Verify identity, signature and write provenance
+        run: |
+          set -euo pipefail
+          mkdir -p dist/evidence
+          BT="$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -1)"
+          echo "build-tools: $BT"
+          apk_src="$(find androidApp/build/outputs/apk/rtl -maxdepth 1 -name '*.apk' | head -1)"
+          test -n "$apk_src" || { echo "::error::no RTL APK produced"; exit 1; }
+          apk="dist/herald-rtl-${APP_VERSION}-${GITHUB_SHA:0:12}.apk"
+          cp "$apk_src" "$apk"
+          "$BT/aapt2" dump badging "$apk" > dist/evidence/aapt2-badging.txt
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$apk" > dist/evidence/aapt2-manifest.txt 2>&1 || true
+          "$BT/apksigner" verify --verbose --print-certs "$apk" > dist/evidence/apksigner-verify.txt 2>&1
+          cat dist/evidence/apksigner-verify.txt
+          sha256sum "$apk" | tee dist/evidence/apk.sha256
+          printf 'source_sha %s\nsource_tree %s\nworkflow_run %s/%s/attempts/%s\n' \
+            "$source_sha" "$source_tree" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "${GITHUB_RUN_ATTEMPT:-1}" \
+            > dist/SOURCE-REVISION.txt
+          # Test reports and lint output travel with the APK as evidence.
+          for module in designsystem ui; do
+            rsync -a --include '*/' --include '*.xml' --exclude '*' \
+              "shared/$module/build/test-results/testAndroidHostTest/" "dist/evidence/junit-$module/" 2>/dev/null || true
+          done
+          cp androidApp/build/reports/lint-results-*.html dist/evidence/ 2>/dev/null || true
+          cp "$RUNNER_TEMP/build.log" dist/evidence/gradle-build.log
+
+          APK="$apk" BT="$BT" python3 - <<'PY'
+          import hashlib, json, os, re, subprocess, sys, zipfile
+          from pathlib import Path
+
+          apk = Path(os.environ["APK"])
+          bt = Path(os.environ["BT"])
+
+          def run(*args):
+              return subprocess.run(args, capture_output=True, text=True, check=True).stdout
+
+          badging = run(str(bt / "aapt2"), "dump", "badging", str(apk))
+          Path("dist/evidence/aapt2-badging.txt").write_text(badging)
+
+          def grab(pattern, required=True):
+              m = re.search(pattern, badging)
+              if not m:
+                  if required:
+                      sys.exit(f"::error::missing {pattern!r} in aapt2 badging")
+                  return None
+              return m.group(1)
+
+          package = grab(r"package: name='([^']+)'")
+          version_code = int(grab(r"versionCode='(\d+)'"))
+          version_name = grab(r"versionName='([^']+)'")
+          label = grab(r"application-label:'([^']*)'")
+          min_sdk = grab(r"minSdkVersion:'(\d+)'")
+          target_sdk = grab(r"targetSdkVersion:'(\d+)'")
+          native_line = re.search(r"native-code: (.+)", badging)
+          native_codes = re.findall(r"'([^']+)'", native_line.group(1)) if native_line else []
+
+          expected = {
+              "package": "dev.herald.android.matanrtl",
+              "label": "Herald RTL Test",
+              "version_name": "0.13.0-matan-rtl",
+              "version_code": 1300,
+          }
+          found = {"package": package, "label": label, "version_name": version_name, "version_code": version_code}
+          problems = [f"{k}={found[k]!r} != {v!r}" for k, v in expected.items() if found[k] != v]
+          if package in {"dev.herald.android", "dev.herald.android.dev"}:
+              problems.append("package collides with an installed Herald identity")
+          if problems:
+              sys.exit("::error::identity mismatch: " + "; ".join(problems))
+
+          certs = run(str(bt / "apksigner"), "verify", "--print-certs", str(apk))
+          Path("dist/evidence/apksigner-verify.txt").write_text(
+              run(str(bt / "apksigner"), "verify", "--verbose", "--print-certs", str(apk)))
+
+          def cert_field(name):
+              # "Signer #1 certificate SHA-256 digest: ..." or, for a v2-only signature, "V2 Signer: certificate ...".
+              m = re.search(rf"certificate {name} digest: ([0-9a-fA-F]+)", certs)
+              return m.group(1) if m else None
+
+          cert_sha256 = cert_field("SHA-256")
+          cert_sha1 = cert_field("SHA-1")
+          if not cert_sha256:
+              sys.exit("::error::no signer certificate found")
+          if cert_sha256 != os.environ["EXPECTED_CERT_SHA256"]:
+              sys.exit(f"::error::signer changed: {cert_sha256} != {os.environ['EXPECTED_CERT_SHA256']}")
+
+          with zipfile.ZipFile(apk) as zf:
+              bad = zf.testzip()
+              if bad:
+                  sys.exit(f"::error::corrupt APK entry {bad}")
+              names = zf.namelist()
+          leaked = [n for n in names if re.search(r"(?i)(\.jks$|\.keystore$|keystore\.properties|\.pem$|\.p12$)", n)]
+          if leaked:
+              sys.exit(f"::error::key material inside APK: {leaked}")
+          apk_abis = sorted({n.split("/")[1] for n in names if n.startswith("lib/") and n.count("/") > 1})
+          if apk_abis != sorted(native_codes):
+              sys.exit(f"::error::native ABIs disagree: badging {sorted(native_codes)} vs APK {apk_abis}")
+
+          tests = {}
+          for module in ("designsystem", "ui"):
+              d = Path("dist/evidence") / f"junit-{module}"
+              total = failures = errors = skipped = 0
+              if d.is_dir():
+                  for xml in d.glob("*.xml"):
+                      text = xml.read_text(errors="replace")
+                      m = re.search(r"<testsuite[^>]*>", text)
+                      if not m:
+                          continue
+                      head = m.group(0)
+                      def attr(a):
+                          am = re.search(rf'{a}="(\d+)"', head)
+                          return int(am.group(1)) if am else 0
+                      total += attr("tests"); failures += attr("failures")
+                      errors += attr("errors"); skipped += attr("skipped")
+              tests[module] = {"tests": total, "failures": failures, "errors": errors, "skipped": skipped}
+          if any(v["tests"] == 0 for v in tests.values()):
+              sys.exit(f"::error::missing JUnit reports: {tests}")
+
+          versions = {}
+          toml = Path("gradle/libs.versions.toml").read_text()
+          for key in ("kotlin", "agp", "android-compileSdk", "android-targetSdk", "android-minSdk"):
+              m = re.search(rf'^{re.escape(key)} = "([^"]+)"', toml, re.M)
+              if m:
+                  versions[key] = m.group(1)
+
+          data = apk.read_bytes()
+          provenance = {
+              "schema": "herald-rtl-test-apk/provenance/v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "ref": os.environ["GITHUB_REF"],
+              "event": os.environ["GITHUB_EVENT_NAME"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+              "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              "source_sha": os.environ["source_sha"],
+              "source_tree": os.environ["source_tree"],
+              "audited_source_sha": os.environ.get("audited_source_sha") or None,
+              "source_diff_vs_audited": ".github/workflows/rtl-test-apk.yml only",
+              "github_sha_matches_checkout": os.environ["source_sha"] == os.environ["GITHUB_SHA"],
+              "apk": {
+                  "file": apk.name,
+                  "bytes": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+              },
+              "identity": {
+                  "package": package,
+                  "label": label,
+                  "version_name": version_name,
+                  "version_code": version_code,
+                  "min_sdk": int(min_sdk),
+                  "target_sdk": int(target_sdk),
+                  "native_code": native_codes,
+                  "coinstall_with": ["dev.herald.android", "dev.herald.android.dev"],
+              },
+              "signing": {
+                  "mode": "durable-test-key (repo secret -> ~/.android/debug.keystore)",
+                  "certificate_sha256": cert_sha256,
+                  "certificate_sha1": cert_sha1,
+                  "apksigner_verified": True,
+              },
+              "toolchain": {
+                  "jdk": "temurin 25",
+                  "gradle": "9.8.0 (wrapper)",
+                  "android_gradle_plugin": versions.get("agp"),
+                  "kotlin": versions.get("kotlin"),
+                  "compile_sdk": versions.get("android-compileSdk"),
+                  "build_tools": bt.name,
+                  "runner": os.environ.get("ImageOS", "ubuntu-latest"),
+                  "runner_image": os.environ.get("ImageVersion"),
+              },
+              "tests": tests,
+              "built_at_utc": subprocess.run(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"],
+                                             capture_output=True, text=True).stdout.strip(),
+              "limitations": [
+                  "signed with a test key, not the official Herald release key",
+                  "no emulator/device run: nothing here proves on-phone RTL rendering",
+              ],
+          }
+          Path("dist/provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+          print(json.dumps(provenance, indent=2))
+
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with summary.open("a") as fh:
+              fh.write(f"### RTL test APK\n\n")
+              fh.write(f"- source `{provenance['source_sha']}` (tree `{provenance['source_tree']}`)\n")
+              fh.write(f"- APK `{apk.name}` — {len(data)} bytes — sha256 `{provenance['apk']['sha256']}`\n")
+              fh.write(f"- `{package}` / {label} / {version_name} ({version_code})\n")
+              fh.write(f"- certificate SHA-256 `{cert_sha256}`\n")
+              fh.write(f"- tests: " + ", ".join(f"{k} {v['tests']} passed" for k, v in tests.items()) + "\n")
+          PY
+
+      - name: Upload APK and provenance
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: herald-rtl-test-apk-${{ github.sha }}
+          path: dist/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Build log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rtl-test-apk-failure-log-${{ github.sha }}
+          path: |
+            dist/
+            ${{ runner.temp }}/build.log
+          if-no-files-found: warn
+          retention-days: 7

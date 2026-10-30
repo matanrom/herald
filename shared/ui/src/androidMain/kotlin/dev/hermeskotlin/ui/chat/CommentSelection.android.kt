@@ -17,6 +17,7 @@ internal actual fun PlatformCommentableSelection(
     onAction: ((SelectionAction, SelectionAnchor) -> Unit)?,
     content: @Composable () -> Unit,
 ) {
+    // The renderer never adds layout characters. Native Copy must use the platform clipboard unchanged.
     if (onAction == null) {
         SelectionContainer(content = content)
         return
@@ -74,7 +75,8 @@ private fun anchorOf(state: SelectionState): SelectionAnchor? {
     val start = if (offset != null && fits(blocks, selected, startBlock, offset)) offset else guess(startBlock)
     val endBlock = startBlock + selected.size - 1
     val end = if (selected.size == 1) start + first.length else selected.last().length
-    return SelectionAnchor(blocks, startBlock, start, endBlock, end)
+    // Style-only direction leaves original block text and offsets intact, including authored controls.
+    return rawAnchor(blocks, startBlock, start, endBlock, end)
 }
 
 /**

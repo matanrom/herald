@@ -130,8 +130,40 @@ class ReviewCommentsTest {
     }
 
     @Test
+    fun textWithoutIsolatesKeepsTheAnchorItHad() {
+        val anchor = rawAnchor(blocks, 3, 30, 3, 35)
+        assertEquals(SelectionAnchor(blocks, 3, 30, 3, 35), anchor)
+    }
+
+    @Test
     fun openingWordsDropMarkdownAndStopAfterEightWords() {
         assertEquals("Here's the plan for the sync worker you…", openingWords("## **Here's** the plan for the sync worker you asked about"))
+    }
+
+    @Test
+    fun authoredControlsAndAllPartialRangesRemainExactInComments() {
+        for (text in listOf("שלום \u2066hello\u2069 סוף", "שלום \u2066123\u2069 סוף", "שלום foo\u200Fbar 🙂 סוף")) {
+            for (start in 0..text.length) for (end in start..text.length) {
+                val anchor = rawAnchor(listOf(text), 0, start, 0, end)
+                assertEquals(listOf(text), anchor.blocks)
+                assertEquals(start, anchor.start)
+                assertEquals(end, anchor.end)
+                assertEquals(text.substring(start, end), anchor.text)
+                assertEquals(listOf(TextHighlight(text, start, end)), anchor.highlights)
+                assertEquals(anchor.text, newComment(1, reply, anchor).quote)
+            }
+        }
+    }
+
+    @Test
+    fun crossBlockAuthoredIsolatesKeepBothEndpointsAndRepeatedEmojiOffsets() {
+        val text = listOf("שלום 🙂 \u2066auto_prune\u2069", "שוב 🙂 \u2066auto_prune\u2069 סוף")
+        val start = text[0].indexOf("auto_prune") + 3
+        val end = text[1].indexOf("auto_prune") + 4
+        val anchor = rawAnchor(text, 0, start, 1, end)
+        assertEquals(text, anchor.blocks)
+        assertEquals(text[0].substring(start) + "\n" + text[1].substring(0, end), anchor.text)
+        assertEquals(listOf(TextHighlight(text[0], start, text[0].length), TextHighlight(text[1], 0, end)), anchor.highlights)
     }
 
     private companion object {
