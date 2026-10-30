@@ -3550,10 +3550,7 @@ internal fun ComposerTextInput(
     CompositionLocalProvider(LocalTextSelectionColors provides LocalTextSelectionColors.current) {
         BasicTextField(
             state = state,
-            textStyle = Theme[typography][body].copy(
-                color = Theme[colors][textColor],
-                textDirection = TextDirection.Content,
-            ),
+            textStyle = Theme[typography][body].copy(color = Theme[colors][textColor]),
             cursorBrush = SolidColor(Theme[colors][accent]),
             lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = maxHeightInLines),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -3570,7 +3567,7 @@ internal fun ComposerTextInput(
                     // intrinsic-width box anchored on a single side. Propagating the field's width to the
                     // editor gives each paragraph the whole line, and each paragraph's own direction then
                     // puts it at its own side. A paragraph that wraps keeps that side on every line.
-                    Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) { innerTextField() }
+                    Box { innerTextField() }
                 }
             },
         )
