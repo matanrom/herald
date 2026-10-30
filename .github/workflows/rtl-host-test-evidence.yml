@@ -2,7 +2,7 @@
 # JUnit results. It is not part of the change proposed upstream.
 name: RTL host test evidence
 on:
-  workflow_dispatch:
+  pull_request:
 permissions:
   contents: read
 jobs:
