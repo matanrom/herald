@@ -112,6 +112,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -133,10 +134,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.composables.icons.lucide.ArrowDown
@@ -2847,6 +2850,37 @@ private fun Banner(message: String, actionLabel: String?, onAction: () -> Unit, 
 }
 
 /**
+ * The composer's editable field, drawn by the unstyled field with the draft's own direction. Split out of
+ * [Composer] unchanged so a rendered host test can measure the field the phone actually draws; [Composer]
+ * supplies the focus, padding and placeholder it always did.
+ *
+ * Style only: the draft reads in the direction of what's been typed so far, nothing is inserted into the
+ * text, so what's sent, undone and copied is exactly what was typed.
+ */
+@Composable
+internal fun ComposerTextInput(
+    state: TextFieldState,
+    modifier: Modifier = Modifier,
+    onTextLayout: (Density.(getResult: () -> TextLayoutResult?) -> Unit)? = null,
+    placeholder: @Composable () -> Unit,
+) {
+    UnstyledTextField(
+        state = state,
+        textStyle = Theme[typography][body].copy(textDirection = BidiText.direction(state.text.toString())),
+        textColor = Theme[colors][textColor],
+        cursorBrush = SolidColor(Theme[colors][accent]),
+        // UnstyledTextField defaults to unspecified colors, which hides the selection and its handles.
+        selectionColors = LocalTextSelectionColors.current,
+        lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 8),
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        onTextLayout = onTextLayout,
+        modifier = modifier,
+    ) {
+        TextInput(placeholder = placeholder)
+    }
+}
+
+/**
  * Desktop's composer stood up for a phone: a flat outlined box, the text on top; beneath it +, dictation
  * and voice chat, the model and thinking level as quiet text, and the round send button. While a task runs,
  * Stop is on the live task card above; a message typed mid-task gets a Send that steers, queues or stops and
@@ -2926,36 +2960,23 @@ private fun Composer(
                         CommentTray(comments, focusComment = focusComment, onFocused = onCommentFocused, onRemove = actions::removeComment)
                     }
                     if (attachments.isNotEmpty()) ComposerTray(attachments, onRemove = actions::removeAttachment)
-                    UnstyledTextField(
+                    ComposerTextInput(
                         state = actions.composer,
-                        // Style only: the draft reads in the direction of what's been typed so far, and the field
-                        // goes back to following each string on its own once it's empty. Nothing is inserted into
-                        // the text, so what's sent, undone and copied is exactly what was typed.
-                        textStyle = Theme[typography][body].copy(textDirection = BidiText.direction(actions.composer.text.toString())),
-                        textColor = Theme[colors][textColor],
-                        cursorBrush = SolidColor(Theme[colors][accent]),
-                        // UnstyledTextField defaults to unspecified colors, which hides the selection and its handles.
-                        selectionColors = LocalTextSelectionColors.current,
-                        lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 8),
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 28.dp).padding(horizontal = 12.dp).focusRequester(focus),
-                    ) {
-                        TextInput(
-                            placeholder = {
-                                Text(
-                                    when {
-                                        !connected -> "Reconnecting to Hermes…"
-                                        comments.isNotEmpty() -> "Anything else? (optional)"
-                                        // Mid-task a message joins the running task, by Queue or Steer.
-                                        state.running -> "Add to this task…"
-                                        else -> placeholder
-                                    },
-                                    style = Theme[typography][body],
-                                    color = Theme[colors][textTertiary],
-                                )
-                            },
-                        )
-                    }
+                        placeholder = {
+                            Text(
+                                when {
+                                    !connected -> "Reconnecting to Hermes…"
+                                    comments.isNotEmpty() -> "Anything else? (optional)"
+                                    // Mid-task a message joins the running task, by Queue or Steer.
+                                    state.running -> "Add to this task…"
+                                    else -> placeholder
+                                },
+                                style = Theme[typography][body],
+                                color = Theme[colors][textTertiary],
+                            )
+                        },
+                    )
                     // The same test send() makes: with attachments, slash text goes out as a prompt, not a command.
                     val command = attachments.isEmpty() && SlashCommand.parse(actions.composer.text.toString().trim()) != null
                     // A steer can't carry files; send() queues those instead, so say that.

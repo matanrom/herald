@@ -1,0 +1,148 @@
+# Rendered RTL layout harness: runs the Robolectric+Compose geometry tests for the composer and ordinary
+# Markdown paragraphs on an exact revision, and publishes the measured geometry, screenshots and JUnit
+# results. Test-only: no secrets, no APK, no lint, no writes outside this job's artifacts.
+#
+# The tests fail on purpose before the production fix (RED) and pass after it (GREEN). Set
+# `revert_fix_sha` on a manual run to revert that commit's production hunks in the checkout and re-run the
+# same tests to prove the fix is load-bearing.
+name: RTL layout harness
+
+on:
+  workflow_dispatch:
+    inputs:
+      revert_fix_sha:
+        description: "Optional: commit whose changes are reverted before the run (RED re-proof)"
+        required: false
+        type: string
+  push:
+    branches: [test/rtl-layout-harness]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rtl-layout-harness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact triggering revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact source checkout
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          echo "github.sha = $GITHUB_SHA"
+          echo "HEAD       = $head_sha"
+          test "$head_sha" = "$GITHUB_SHA" || { echo "::error::HEAD is not github.sha"; exit 1; }
+          test ! -e .git/MERGE_HEAD || { echo "::error::merge checkout, not an exact revision"; exit 1; }
+          test -z "$(git status --porcelain)" || { echo "::error::dirty worktree"; git status --porcelain; exit 1; }
+          echo "source_sha=$head_sha" >> "$GITHUB_ENV"
+
+      - name: Optional RED re-proof (revert the fix)
+        if: ${{ inputs.revert_fix_sha != '' }}
+        run: |
+          set -euo pipefail
+          echo "reverting ${{ inputs.revert_fix_sha }} to re-run the same tests without the fix"
+          git revert --no-commit --no-edit "${{ inputs.revert_fix_sha }}"
+          git status --short
+          echo "::notice::production fix reverted for this run; the geometry tests must fail"
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Run the rendered layout tests
+        id: tests
+        run: |
+          set +e
+          ./gradlew --no-daemon --continue --console=plain \
+            :shared:designsystem:testAndroidHostTest --tests 'dev.hermeskotlin.designsystem.components.MarkdownRtlLayoutTest' \
+            :shared:ui:testAndroidHostTest --tests 'dev.hermeskotlin.ui.chat.ComposerRtlLayoutTest' \
+            2>&1 | tee layout-tests.log
+          status="${PIPESTATUS[0]}"
+          echo "gradle_exit=$status" >> "$GITHUB_OUTPUT"
+          echo "::notice::gradle exit $status (0 = GREEN, non-zero = RED/failed)"
+          exit 0
+
+      - name: Publish geometry and JUnit results
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "### Rendered RTL layout harness"
+            echo
+            echo "- source \`${source_sha}\`"
+            echo "- gradle exit: \`${{ steps.tests.outputs.gradle_exit }}\` (0 = GREEN)"
+            echo "- run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "#### Measured geometry"
+            echo
+            echo '```'
+            find shared -path '*/build/rtl-geometry/*.txt' -type f | sort | while read -r f; do
+              printf '%s: ' "${f#*/build/rtl-geometry/}"
+              cat "$f"
+            done
+            echo '```'
+            echo
+            echo "#### JUnit"
+            echo
+            echo '```'
+            python3 - <<'PY'
+          import glob, re
+          from pathlib import Path
+
+          total = failures = errors = skipped = 0
+          for xml in sorted(glob.glob("shared/*/build/test-results/testAndroidHostTest/*.xml")):
+              text = Path(xml).read_text(errors="replace")
+              m = re.search(r"<testsuite[^>]*>", text)
+              if not m:
+                  continue
+              head = m.group(0)
+              def attr(name):
+                  a = re.search(rf'{name}="(\d+)"', head)
+                  return int(a.group(1)) if a else 0
+              total += attr("tests"); failures += attr("failures")
+              errors += attr("errors"); skipped += attr("skipped")
+              print(f"{Path(xml).name}: tests={attr('tests')} failures={attr('failures')} "
+                    f"errors={attr('errors')} skipped={attr('skipped')}")
+              for case in re.finditer(r'<testcase name="([^"]+)"[^>]*>(.*?)</testcase>', text, re.S):
+                  if "<failure" in case.group(2) or "<error" in case.group(2):
+                      msg = re.search(r'message="([^"]{0,400})', case.group(2))
+                      print(f"  FAILED {case.group(1)}: {msg.group(1) if msg else ''}")
+          print(f"TOTAL tests={total} failures={failures} errors={errors} skipped={skipped}")
+          PY
+            echo '```'
+            echo
+            echo "#### Test log (tail)"
+            echo
+            echo '```'
+            tail -60 layout-tests.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "summary written"
+
+      - name: Upload geometry, screenshots, JUnit and log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rtl-layout-harness-${{ github.sha }}
+          path: |
+            shared/*/build/rtl-geometry/
+            shared/*/build/test-results/testAndroidHostTest/
+            layout-tests.log
+          if-no-files-found: warn
+          retention-days: 30
