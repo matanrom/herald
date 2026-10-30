@@ -169,7 +169,8 @@ jobs:
           label = grab(r"application-label:'([^']*)'")
           min_sdk = grab(r"minSdkVersion:'(\d+)'")
           target_sdk = grab(r"targetSdkVersion:'(\d+)'")
-          native_codes = re.findall(r"native-code: '([^']*)'", badging)
+          native_line = re.search(r"native-code: (.+)", badging)
+          native_codes = re.findall(r"'([^']+)'", native_line.group(1)) if native_line else []
 
           expected = {
               "package": "dev.herald.android.matanrtl",
@@ -208,6 +209,9 @@ jobs:
           leaked = [n for n in names if re.search(r"(?i)(\.jks$|\.keystore$|keystore\.properties|\.pem$|\.p12$)", n)]
           if leaked:
               sys.exit(f"::error::key material inside APK: {leaked}")
+          apk_abis = sorted({n.split("/")[1] for n in names if n.startswith("lib/") and n.count("/") > 1})
+          if apk_abis != sorted(native_codes):
+              sys.exit(f"::error::native ABIs disagree: badging {sorted(native_codes)} vs APK {apk_abis}")
 
           tests = {}
           for module in ("designsystem", "ui"):
