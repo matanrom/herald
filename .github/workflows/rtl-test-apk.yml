@@ -163,7 +163,7 @@ jobs:
           version_code = int(grab(r"versionCode='(\d+)'"))
           version_name = grab(r"versionName='([^']+)'")
           label = grab(r"application-label:'([^']*)'")
-          min_sdk = grab(r"sdkVersion:'(\d+)'")
+          min_sdk = grab(r"minSdkVersion:'(\d+)'")
           target_sdk = grab(r"targetSdkVersion:'(\d+)'")
           native_codes = re.findall(r"native-code: '([^']*)'", badging)
 
@@ -185,11 +185,12 @@ jobs:
               run(str(bt / "apksigner"), "verify", "--verbose", "--print-certs", str(apk)))
 
           def cert_field(name):
-              m = re.search(rf"{name} digest: ([0-9a-f]+)", certs)
+              # "Signer #1 certificate SHA-256 digest: ..." or, for a v2-only signature, "V2 Signer: certificate ...".
+              m = re.search(rf"certificate {name} digest: ([0-9a-fA-F]+)", certs)
               return m.group(1) if m else None
 
-          cert_sha256 = cert_field("Signer #1 certificate SHA-256")
-          cert_sha1 = cert_field("Signer #1 certificate SHA-1")
+          cert_sha256 = cert_field("SHA-256")
+          cert_sha1 = cert_field("SHA-1")
           if not cert_sha256:
               sys.exit("::error::no signer certificate found")
           if cert_sha256 != os.environ["EXPECTED_CERT_SHA256"]:
