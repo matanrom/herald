@@ -129,15 +129,23 @@ jobs:
           } | tee -a evidence/production-delta.txt >> "$GITHUB_ENV"
 
           changed="$(git diff HEAD --name-only | sort)"
-          expected="$(printf '%s\n' \
-            shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/BidiText.kt \
-            shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/MarkdownText.kt \
-            shared/ui/src/commonMain/kotlin/dev/hermeskotlin/ui/chat/ChatScreen.kt | sort)"
-          test "$changed" = "$expected" || {
-            echo "::error::RED substitution changed files outside the three allowlisted production files"
-            printf '%s\n' "$changed"
-            exit 1
-          }
+          test -n "$changed" || { echo "::error::RED substitution produced no delta"; exit 1; }
+          # Strict subset: every file the substitution touched must be one of the three production
+          # files. A baseline close to HEAD legitimately changes only some of them, so requiring all
+          # three would reject a real pre-fix revision; anything else is still refused by name.
+          while IFS= read -r file; do
+            case "$file" in
+              shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/BidiText.kt) ;;
+              shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/MarkdownText.kt) ;;
+              shared/ui/src/commonMain/kotlin/dev/hermeskotlin/ui/chat/ChatScreen.kt) ;;
+              *)
+                echo "::error::RED substitution changed a file outside the three allowlisted production files: $file"
+                printf '%s\n' "$changed"
+                exit 1
+                ;;
+            esac
+          done <<< "$changed"
+          echo "substituted production files:"; printf '%s\n' "$changed"
           test -n "$(git diff HEAD --numstat)" || { echo "::error::RED substitution produced no delta"; exit 1; }
 
       - name: Self-test the input validator and the fail-closed gate
