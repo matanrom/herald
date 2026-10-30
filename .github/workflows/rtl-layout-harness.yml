@@ -2,17 +2,35 @@
 # Markdown paragraphs on an exact revision, and publishes the measured geometry, screenshots and JUnit
 # results. Test-only: no secrets, no APK, no lint, no writes outside this job's artifacts.
 #
-# The tests fail on purpose before the production fix (RED) and pass after it (GREEN). Set
-# `production_revision` on a manual run to swap in another revision's production files and re-run the same
-# tests, proving the fix is load-bearing.
+# The tests fail on purpose before the production fix (RED) and pass after it (GREEN). A manual run with
+# `expected_result: RED` and `production_revision: <40-char commit id>` restores that revision's three
+# production files before running the same tests, proving the fix is load-bearing.
+#
+# Fail-closed: the run only ends green when the declared expectation is actually demonstrated. Both Gradle
+# exit statuses and the JUnit case identities are checked by .github/scripts/rtl_harness/check_reports.py,
+# after the evidence has been uploaded with always(). A missing report, a compilation/setup failure, an
+# unexpected failure or an unexpected pass all end the run non-zero.
+#
+# Untrusted dispatch input never reaches shell source: it is passed through the environment, validated as a
+# full 40-character commit id, resolved with git to an immutable commit that is an ancestor of the
+# triggering revision, and only then quoted into `git checkout`.
 name: RTL layout harness
 
 on:
   workflow_dispatch:
     inputs:
-      production_revision:
-        description: "Optional: revision whose production files replace HEAD's, to re-prove RED"
+      expected_result:
+        description: "What this run must demonstrate: GREEN (fix present) or RED (pre-fix files restored)"
         required: false
+        default: GREEN
+        type: choice
+        options:
+          - GREEN
+          - RED
+      production_revision:
+        description: "RED only: full 40-character commit id whose production files replace HEAD's"
+        required: false
+        default: ""
         type: string
   push:
     branches: [test/rtl-layout-harness]
@@ -23,6 +41,9 @@ permissions:
 concurrency:
   group: rtl-layout-harness-${{ github.ref }}
   cancel-in-progress: true
+
+# Dispatch inputs are never interpolated into shell source. Only the input-validation step receives the raw
+# values, through its own environment; every later step reads the validated outputs instead.
 
 jobs:
   geometry:
@@ -36,7 +57,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Validate dispatch inputs
+        id: inputs
+        env:
+          # The only place the raw dispatch input is visible, and only as process environment.
+          RTL_EXPECTED_RESULT: ${{ inputs.expected_result }}
+          RTL_PRODUCTION_REVISION: ${{ inputs.production_revision }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/rtl_harness/validate_inputs.py \
+            --expected-result "${RTL_EXPECTED_RESULT}" \
+            --production-revision "${RTL_PRODUCTION_REVISION}" \
+            --event-name "${GITHUB_EVENT_NAME}" \
+            --github-output "${GITHUB_OUTPUT}"
+
       - name: Verify exact source checkout
+        id: source
         run: |
           set -euo pipefail
           head_sha="$(git rev-parse HEAD)"
@@ -46,18 +82,68 @@ jobs:
           test ! -e .git/MERGE_HEAD || { echo "::error::merge checkout, not an exact revision"; exit 1; }
           test -z "$(git status --porcelain)" || { echo "::error::dirty worktree"; git status --porcelain; exit 1; }
           echo "source_sha=$head_sha" >> "$GITHUB_ENV"
+          echo "source_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Optional RED re-proof (pre-fix production files)
-        if: ${{ inputs.production_revision != '' }}
+      # RED re-proof: restore the three pre-fix production files from an immutable, full-SHA commit that is
+      # already part of this checkout's own history. The resolved revision and the exact file delta are
+      # recorded so a RED artifact can never be read as clean-HEAD evidence.
+      - name: Resolve and apply the RED production revision
+        id: production
+        if: steps.inputs.outputs.mode == 'RED'
+        env:
+          PRODUCTION_REVISION: ${{ steps.inputs.outputs.production_revision }}
         run: |
           set -euo pipefail
-          echo "restoring production files from ${{ inputs.production_revision }} to re-run the same tests without the fix"
-          git checkout "${{ inputs.production_revision }}" -- \
+          checkout_sha="$(git rev-parse HEAD)"
+          test "$checkout_sha" = "$GITHUB_SHA" || { echo "::error::HEAD moved before substitution"; exit 1; }
+
+          resolved="$(git rev-parse --verify --quiet "${PRODUCTION_REVISION}^{commit}")" || {
+            echo "::error::production_revision does not name a commit available in this checkout"
+            exit 1
+          }
+          test "$resolved" = "$PRODUCTION_REVISION" || {
+            echo "::error::production_revision did not resolve to itself; not an immutable commit id"
+            exit 1
+          }
+          # Allowlist: only history reachable from the triggering revision may be substituted in.
+          git merge-base --is-ancestor "$resolved" "$GITHUB_SHA" || {
+            echo "::error::production_revision is not an ancestor of the triggering revision"
+            exit 1
+          }
+          tree="$(git rev-parse --verify "${resolved}^{tree}")"
+
+          echo "::notice::restoring pre-fix production files from $resolved (tree $tree) to re-run the same tests"
+          git checkout "$resolved" -- \
             shared/ui/src/commonMain/kotlin/dev/hermeskotlin/ui/chat/ChatScreen.kt \
             shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/MarkdownText.kt \
             shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/BidiText.kt
-          git status --short
-          echo "::notice::production fix removed for this run; the geometry tests must fail"
+
+          mkdir -p evidence
+          git status --short > evidence/production-delta.txt
+          git diff --stat >> evidence/production-delta.txt
+          {
+            echo "checkout_sha=$checkout_sha"
+            echo "checkout_tree=$(git rev-parse "${checkout_sha}^{tree}")"
+            echo "production_sha=$resolved"
+            echo "production_tree=$tree"
+          } | tee -a evidence/production-delta.txt >> "$GITHUB_ENV"
+
+          changed="$(git diff HEAD --name-only | sort)"
+          expected="$(printf '%s\n' \
+            shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/BidiText.kt \
+            shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/MarkdownText.kt \
+            shared/ui/src/commonMain/kotlin/dev/hermeskotlin/ui/chat/ChatScreen.kt | sort)"
+          test "$changed" = "$expected" || {
+            echo "::error::RED substitution changed files outside the three allowlisted production files"
+            printf '%s\n' "$changed"
+            exit 1
+          }
+          test -n "$(git diff HEAD --numstat)" || { echo "::error::RED substitution produced no delta"; exit 1; }
+
+      - name: Self-test the input validator and the fail-closed gate
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s .github/scripts/rtl_harness/tests -p 'test_*.py' -v
 
       - name: Set up JDK 25
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -68,6 +154,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
+      # The exit status is recorded, not converted into success: the fail-closed verdict step at the end of
+      # the job decides the run, after the evidence has been uploaded. Keeping this step from aborting early
+      # is what lets a RED run publish its failure evidence.
       - name: Run the rendered layout tests
         id: tests
         run: |
@@ -78,14 +167,13 @@ jobs:
             2>&1 | tee layout-tests.log
           status="${PIPESTATUS[0]}"
           echo "gradle_exit=$status" >> "$GITHUB_OUTPUT"
-          echo "::notice::gradle exit $status (0 = GREEN, non-zero = RED/failed)"
+          echo "::notice::focused geometry tests exited $status (recorded; enforced by the fail-closed verdict)"
           # Keep the focused geometry evidence before the full suites overwrite the same report directory.
           mkdir -p evidence/layout
           for module in designsystem ui; do
             cp -r "shared/$module/build/test-results/testAndroidHostTest" "evidence/layout/junit-$module" 2>/dev/null || true
             cp -r "shared/$module/build/rtl-geometry" "evidence/layout/geometry-$module" 2>/dev/null || true
           done
-          exit 0
 
       # The fix touches the shared Markdown renderer and the composer field, so the existing host suites run
       # too: the new geometry tests may not trade a layout defect for a behaviour regression.
@@ -98,24 +186,32 @@ jobs:
             2>&1 | tee regression-tests.log
           status="${PIPESTATUS[0]}"
           echo "gradle_exit=$status" >> "$GITHUB_OUTPUT"
-          echo "::notice::regression suites exit $status (0 = all existing tests pass)"
+          echo "::notice::existing host suites exited $status (recorded; enforced by the fail-closed verdict)"
           mkdir -p evidence/regression
           for module in designsystem ui; do
             cp -r "shared/$module/build/test-results/testAndroidHostTest" "evidence/regression/junit-$module" 2>/dev/null || true
           done
-          exit 0
 
       - name: Publish geometry and JUnit results
         if: always()
+        env:
+          EXPECTED_RESULT: ${{ steps.inputs.outputs.mode }}
+          FOCUSED_EXIT: ${{ steps.tests.outputs.gradle_exit }}
+          REGRESSION_EXIT: ${{ steps.regression.outputs.gradle_exit }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           {
             echo "### Rendered RTL layout harness"
             echo
-            echo "- source \`${source_sha}\`"
-            echo "- focused geometry tests: gradle exit \`${{ steps.tests.outputs.gradle_exit }}\` (0 = GREEN)"
-            echo "- existing host suites: gradle exit \`${{ steps.regression.outputs.gradle_exit }}\` (0 = all pass)"
-            echo "- run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "- expected result: \`${EXPECTED_RESULT:-unvalidated}\`"
+            echo "- source \`${source_sha:-unknown}\`"
+            if [ -n "${production_sha:-}" ]; then
+              echo "- RED substitution: production \`${production_sha}\` tree \`${production_tree:-unknown}\` over checkout \`${source_sha:-unknown}\`"
+            fi
+            echo "- focused geometry tests: gradle exit \`${FOCUSED_EXIT:-not-recorded}\`"
+            echo "- existing host suites: gradle exit \`${REGRESSION_EXIT:-not-recorded}\`"
+            echo "- run: ${RUN_URL}"
             echo
             echo "#### Measured geometry"
             echo
@@ -181,3 +277,21 @@ jobs:
             regression-tests.log
           if-no-files-found: warn
           retention-days: 30
+
+      # Last step, always run, and the only thing that decides the run: evidence exists before this gate
+      # can redden the job. Mode empty means input validation already failed and the run is already red.
+      - name: Enforce expected outcome (fail-closed)
+        if: always() && steps.inputs.outputs.mode != ''
+        env:
+          EXPECTED_RESULT: ${{ steps.inputs.outputs.mode }}
+          FOCUSED_EXIT: ${{ steps.tests.outputs.gradle_exit }}
+          REGRESSION_EXIT: ${{ steps.regression.outputs.gradle_exit }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/rtl_harness/check_reports.py \
+            --expected-result "${EXPECTED_RESULT}" \
+            --focused-exit "${FOCUSED_EXIT}" \
+            --regression-exit "${REGRESSION_EXIT}" \
+            --focused-root evidence/layout \
+            --regression-root evidence/regression \
+            --github-summary "${GITHUB_STEP_SUMMARY}"
