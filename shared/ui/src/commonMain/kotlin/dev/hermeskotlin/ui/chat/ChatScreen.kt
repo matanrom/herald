@@ -110,6 +110,7 @@ import dev.hermeskotlin.core.bots.botLook
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
@@ -131,13 +132,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
@@ -204,10 +205,8 @@ import com.composables.icons.lucide.Wrench
 import com.composables.icons.lucide.X
 import com.composables.icons.lucide.Zap
 import com.composeunstyled.Text
-import com.composeunstyled.TextInput
 import com.composeunstyled.UnstyledButton
 import com.composeunstyled.UnstyledIcon
-import com.composeunstyled.UnstyledTextField
 import com.composeunstyled.theme.Theme
 import com.composeunstyled.theme.rememberColoredIndication
 import dev.hermeskotlin.core.chat.Attachment
@@ -2851,12 +2850,17 @@ private fun Banner(message: String, actionLabel: String?, onAction: () -> Unit, 
 }
 
 /**
- * The composer's editable field, drawn by the unstyled field with the draft's own direction. Split out of
+ * The composer's editable field, drawn with the draft's own paragraph directions. Split out of
  * [Composer] unchanged so a rendered host test can measure the field the phone actually draws; [Composer]
  * supplies the focus, padding and placeholder it always did.
  *
- * Style only: the draft reads in the direction of what's been typed so far, nothing is inserted into the
- * text, so what's sent, undone and copied is exactly what was typed.
+ * Direction is resolved per paragraph, never once for the whole draft: Compose resolves
+ * [TextDirection.Content] against each paragraph's first strong character (falling back to the ambient
+ * direction only for a paragraph without one). A single direction taken from the whole draft made an
+ * English paragraph typed after a newline read — and start — at the Hebrew side.
+ *
+ * Style only: nothing is inserted into the text, so what's sent, undone and copied is exactly what was
+ * typed.
  */
 @Composable
 internal fun ComposerTextInput(
@@ -2865,28 +2869,33 @@ internal fun ComposerTextInput(
     onTextLayout: (Density.(getResult: () -> TextLayoutResult?) -> Unit)? = null,
     placeholder: @Composable () -> Unit,
 ) {
-    val text = state.text.toString()
-    // Placement, not just glyph order: a short Hebrew draft is a narrow text box, and the unstyled field's inner
-    // Box does not propagate the field's width to it. Giving the input the full viewport and anchoring its
-    // content to the draft's side is what puts the text at the right of a wide field. Both are needed; either
-    // alone leaves the text box at the left.
-    val ambient = LocalLayoutDirection.current
-    val placement = BidiText.placement(text, ambient)
-    CompositionLocalProvider(LocalLayoutDirection provides placement) {
-        UnstyledTextField(
+    CompositionLocalProvider(LocalTextSelectionColors provides LocalTextSelectionColors.current) {
+        BasicTextField(
             state = state,
-            textStyle = Theme[typography][body].copy(textDirection = BidiText.direction(text)),
-            textColor = Theme[colors][textColor],
+            textStyle = Theme[typography][body].copy(
+                color = Theme[colors][textColor],
+                textDirection = TextDirection.Content,
+            ),
             cursorBrush = SolidColor(Theme[colors][accent]),
-            // UnstyledTextField defaults to unspecified colors, which hides the selection and its handles.
-            selectionColors = LocalTextSelectionColors.current,
             lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 8),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             onTextLayout = onTextLayout,
-            modifier = modifier,
-        ) {
-            TextInput(modifier = Modifier.fillMaxWidth(), placeholder = placeholder)
-        }
+            modifier = modifier.semantics(mergeDescendants = true) {},
+            decorator = { innerTextField ->
+                Box(Modifier.fillMaxWidth()) {
+                    if (state.text.isEmpty()) {
+                        Box(Modifier.matchParentSize(), contentAlignment = Alignment.TopStart) { placeholder() }
+                    }
+                    // Per-paragraph alignment only works if the editor's text box is the width of the
+                    // field. AndroidX measures the text with the minimum width it is given; the library's
+                    // TextInput Box resets that minimum to zero, so every paragraph shared one
+                    // intrinsic-width box anchored on a single side. Propagating the field's width to the
+                    // editor gives each paragraph the whole line, and each paragraph's own direction then
+                    // puts it at its own side. A paragraph that wraps keeps that side on every line.
+                    Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) { innerTextField() }
+                }
+            },
+        )
     }
 }
 
