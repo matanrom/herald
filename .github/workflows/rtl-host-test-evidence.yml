@@ -17,15 +17,10 @@ jobs:
           distribution: jetbrains
           java-version: "25"
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      - name: Designsytem RTL tests
+      - name: RTL host tests, designsystem and composer
         run: >
           ./gradlew --no-daemon --continue --console=plain
-          :shared:designsystem:testAndroidHostTest
-          --tests '*MarkdownRtlLayoutTest*' --tests '*BidiStyleTest*' --tests '*RtlIntegrityTest*'
-      - name: Composer RTL tests
-        run: >
-          ./gradlew --no-daemon --continue --console=plain
-          :shared:ui:testAndroidHostTest --tests '*ComposerRtlLayoutTest*'
+          :shared:designsystem:testAndroidHostTest :shared:ui:testAndroidHostTest
       - name: Print results
         if: always()
         run: |
