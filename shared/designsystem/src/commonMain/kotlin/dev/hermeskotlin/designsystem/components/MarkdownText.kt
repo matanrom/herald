@@ -364,21 +364,29 @@ private fun HighlightedParagraph(content: String, node: ASTNode) {
         return
     }
     val highlights = LocalTextHighlights.current
-    if (highlights.isEmpty()) {
-        MarkdownParagraph(content, node)
-        return
+    // Placement comes from this paragraph's own text, never the whole reply: a short Hebrew block is a narrow
+    // text box, so it needs the full reply width *and* a right-anchored start to sit at the right margin. An
+    // English paragraph inside a Hebrew-heavy reply still starts at the left, and a neutral block keeps the
+    // ambient side. Neither the width nor the direction alone moves the text: both are needed.
+    val style = LocalMarkdownTypography.current.paragraph.copy(textDirection = BidiText.direction(content))
+    CompositionLocalProvider(LocalLayoutDirection provides BidiText.placement(content, LocalLayoutDirection.current)) {
+        if (highlights.isEmpty()) {
+            MarkdownParagraph(content, node, modifier = Modifier.fillMaxWidth(), style = style)
+        } else {
+            val settings = annotatorSettings()
+            val color = highlightColor()
+            val text = remember(content, node, style, settings, highlights, color) {
+                buildAnnotatedString {
+                    pushStyle(style.toSpanStyle())
+                    buildMarkdownAnnotatedString(content, node, settings)
+                    pop()
+                }.withHighlights(highlights, color)
+            }
+            // The library's link wrapper draws a content-sized leaf in a Box, so the paragraph's own layout
+            // direction is what anchors that leaf on the right; the width alone would not.
+            LibraryMarkdownText(text, node, modifier = Modifier.fillMaxWidth(), style = style)
+        }
     }
-    val style = LocalMarkdownTypography.current.paragraph
-    val settings = annotatorSettings()
-    val color = highlightColor()
-    val text = remember(content, node, style, settings, highlights, color) {
-        buildAnnotatedString {
-            pushStyle(style.toSpanStyle())
-            buildMarkdownAnnotatedString(content, node, settings)
-            pop()
-        }.withHighlights(highlights, color)
-    }
-    LibraryMarkdownText(text, node, style = style)
 }
 
 /** A bullet list whose markers are small accent dots, centered on the first line; nested lists get muted ones. */

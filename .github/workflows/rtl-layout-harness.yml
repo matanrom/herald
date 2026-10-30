@@ -76,6 +76,30 @@ jobs:
           status="${PIPESTATUS[0]}"
           echo "gradle_exit=$status" >> "$GITHUB_OUTPUT"
           echo "::notice::gradle exit $status (0 = GREEN, non-zero = RED/failed)"
+          # Keep the focused geometry evidence before the full suites overwrite the same report directory.
+          mkdir -p evidence/layout
+          for module in designsystem ui; do
+            cp -r "shared/$module/build/test-results/testAndroidHostTest" "evidence/layout/junit-$module" 2>/dev/null || true
+            cp -r "shared/$module/build/rtl-geometry" "evidence/layout/geometry-$module" 2>/dev/null || true
+          done
+          exit 0
+
+      # The fix touches the shared Markdown renderer and the composer field, so the existing host suites run
+      # too: the new geometry tests may not trade a layout defect for a behaviour regression.
+      - name: Run the existing host suites
+        id: regression
+        run: |
+          set +e
+          ./gradlew --no-daemon --continue --console=plain \
+            :shared:designsystem:testAndroidHostTest :shared:ui:testAndroidHostTest \
+            2>&1 | tee regression-tests.log
+          status="${PIPESTATUS[0]}"
+          echo "gradle_exit=$status" >> "$GITHUB_OUTPUT"
+          echo "::notice::regression suites exit $status (0 = all existing tests pass)"
+          mkdir -p evidence/regression
+          for module in designsystem ui; do
+            cp -r "shared/$module/build/test-results/testAndroidHostTest" "evidence/regression/junit-$module" 2>/dev/null || true
+          done
           exit 0
 
       - name: Publish geometry and JUnit results
@@ -86,14 +110,15 @@ jobs:
             echo "### Rendered RTL layout harness"
             echo
             echo "- source \`${source_sha}\`"
-            echo "- gradle exit: \`${{ steps.tests.outputs.gradle_exit }}\` (0 = GREEN)"
+            echo "- focused geometry tests: gradle exit \`${{ steps.tests.outputs.gradle_exit }}\` (0 = GREEN)"
+            echo "- existing host suites: gradle exit \`${{ steps.regression.outputs.gradle_exit }}\` (0 = all pass)"
             echo "- run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo
             echo "#### Measured geometry"
             echo
             echo '```'
-            find shared -path '*/build/rtl-geometry/*.txt' -type f | sort | while read -r f; do
-              printf '%s: ' "${f#*/build/rtl-geometry/}"
+            find evidence/layout -name '*.txt' -type f 2>/dev/null | sort | while read -r f; do
+              printf '%s: ' "$(basename "$f")"
               cat "$f"
             done
             echo '```'
@@ -105,32 +130,38 @@ jobs:
           import glob, re
           from pathlib import Path
 
-          total = failures = errors = skipped = 0
-          for xml in sorted(glob.glob("shared/*/build/test-results/testAndroidHostTest/*.xml")):
-              text = Path(xml).read_text(errors="replace")
-              m = re.search(r"<testsuite[^>]*>", text)
-              if not m:
-                  continue
-              head = m.group(0)
-              def attr(name):
-                  a = re.search(rf'{name}="(\d+)"', head)
-                  return int(a.group(1)) if a else 0
-              total += attr("tests"); failures += attr("failures")
-              errors += attr("errors"); skipped += attr("skipped")
-              print(f"{Path(xml).name}: tests={attr('tests')} failures={attr('failures')} "
-                    f"errors={attr('errors')} skipped={attr('skipped')}")
-              for case in re.finditer(r'<testcase name="([^"]+)"[^>]*>(.*?)</testcase>', text, re.S):
-                  if "<failure" in case.group(2) or "<error" in case.group(2):
-                      msg = re.search(r'message="([^"]{0,400})', case.group(2))
-                      print(f"  FAILED {case.group(1)}: {msg.group(1) if msg else ''}")
-          print(f"TOTAL tests={total} failures={failures} errors={errors} skipped={skipped}")
+          def report(label, pattern):
+              total = failures = errors = skipped = 0
+              for xml in sorted(glob.glob(pattern)):
+                  text = Path(xml).read_text(errors="replace")
+                  m = re.search(r"<testsuite[^>]*>", text)
+                  if not m:
+                      continue
+                  head = m.group(0)
+                  def attr(name):
+                      a = re.search(rf'{name}="(\d+)"', head)
+                      return int(a.group(1)) if a else 0
+                  total += attr("tests"); failures += attr("failures")
+                  errors += attr("errors"); skipped += attr("skipped")
+                  print(f"[{label}] {Path(xml).name}: tests={attr('tests')} failures={attr('failures')} "
+                        f"errors={attr('errors')} skipped={attr('skipped')}")
+                  if label == "focused":
+                      for case in re.finditer(r'<testcase name="([^"]+)"[^>]*?(/>|>(.*?)</testcase>)', text, re.S):
+                          body = case.group(3) or ""
+                          if "<failure" in body or "<error" in body:
+                              msg = re.search(r'message="([^"]{0,400})', body)
+                              print(f"  FAILED {case.group(1)}: {msg.group(1) if msg else ''}")
+              print(f"[{label}] TOTAL tests={total} failures={failures} errors={errors} skipped={skipped}")
+
+          report("focused", "evidence/layout/junit-*/*.xml")
+          report("regression", "evidence/regression/junit-*/*.xml")
           PY
             echo '```'
             echo
             echo "#### Test log (tail)"
             echo
             echo '```'
-            tail -60 layout-tests.log || true
+            tail -40 layout-tests.log || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "summary written"
@@ -141,8 +172,9 @@ jobs:
         with:
           name: rtl-layout-harness-${{ github.sha }}
           path: |
+            evidence/
             shared/*/build/rtl-geometry/
-            shared/*/build/test-results/testAndroidHostTest/
             layout-tests.log
+            regression-tests.log
           if-no-files-found: warn
           retention-days: 30

@@ -131,6 +131,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -2864,19 +2865,27 @@ internal fun ComposerTextInput(
     onTextLayout: (Density.(getResult: () -> TextLayoutResult?) -> Unit)? = null,
     placeholder: @Composable () -> Unit,
 ) {
-    UnstyledTextField(
-        state = state,
-        textStyle = Theme[typography][body].copy(textDirection = BidiText.direction(state.text.toString())),
-        textColor = Theme[colors][textColor],
-        cursorBrush = SolidColor(Theme[colors][accent]),
-        // UnstyledTextField defaults to unspecified colors, which hides the selection and its handles.
-        selectionColors = LocalTextSelectionColors.current,
-        lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 8),
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-        onTextLayout = onTextLayout,
-        modifier = modifier,
-    ) {
-        TextInput(placeholder = placeholder)
+    val text = state.text.toString()
+    // Placement, not just glyph order: a short Hebrew draft is a narrow text box, and the unstyled field's inner
+    // Box does not propagate the field's width to it. Giving the input the full viewport and anchoring its
+    // content to the draft's side is what puts the text at the right of a wide field. Both are needed; either
+    // alone leaves the text box at the left.
+    val placement = BidiText.placement(text, LocalLayoutDirection.current)
+    CompositionLocalProvider(LocalLayoutDirection provides placement) {
+        UnstyledTextField(
+            state = state,
+            textStyle = Theme[typography][body].copy(textDirection = BidiText.direction(text)),
+            textColor = Theme[colors][textColor],
+            cursorBrush = SolidColor(Theme[colors][accent]),
+            // UnstyledTextField defaults to unspecified colors, which hides the selection and its handles.
+            selectionColors = LocalTextSelectionColors.current,
+            lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 8),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            onTextLayout = onTextLayout,
+            modifier = modifier,
+        ) {
+            TextInput(modifier = Modifier.fillMaxWidth(), placeholder = placeholder)
+        }
     }
 }
 
