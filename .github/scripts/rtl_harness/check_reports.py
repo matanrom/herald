@@ -2,15 +2,15 @@
 """Fail-closed verdict for the rendered RTL layout harness.
 
 The harness is expected to pass after the production fix (GREEN) and to fail in
-exactly nine named geometry assertions when the pre-fix production files are
-restored (RED). Both facts are contractual, so this gate decides on test
-*identities*, not on the presence of a JUnit report:
+exactly the six named paragraph-direction assertions when the pre-fix production
+files are restored (RED). Both facts are contractual, so this gate decides on
+test *identities*, not on the presence of a JUnit report:
 
-* GREEN requires both Gradle invocations to exit 0, all 17 rendered cases
+* GREEN requires both Gradle invocations to exit 0, all 25 rendered cases
   present and passing, and the pre-existing host suites present with no
   failures, errors or skips.
-* RED requires both Gradle invocations to exit non-zero, exactly the same 17
-  cases to be present, exactly the nine expected geometry cases to fail, every
+* RED requires both Gradle invocations to exit non-zero, exactly the same 25
+  cases to be present, exactly the six expected paragraph cases to fail, every
   control to pass, and no other failure, error or skip anywhere.
 
 Missing or unparsable reports, a compilation/setup failure, a zero-test report,
@@ -27,7 +27,7 @@ from pathlib import Path
 DESIGNSYSTEM_SUITE = "dev.hermeskotlin.designsystem.components.MarkdownRtlLayoutTest"
 UI_SUITE = "dev.hermeskotlin.ui.chat.ComposerRtlLayoutTest"
 
-# The 17 rendered cases the harness adds, as (suite, method) identities.
+# The 25 rendered cases the harness adds, as (suite, method) identities.
 EXPECTED_CASES = {
     DESIGNSYSTEM_SUITE: (
         "englishParagraphStartsAtTheLeftContentEdge",
@@ -49,31 +49,34 @@ EXPECTED_CASES = {
         "englishDraftStaysLeftInAnRtlAmbientContext",
         "wrappedHebrewLinesShareTheRightContentEdge",
         "theDraftKeepsItsExactBytes",
+        "hebrewParagraphThenNewlineEnglishStartsAtTheLeftContentEdge",
+        "hebrewParagraphThenNewlineEnglishStaysLeftInAnRtlAmbientContext",
+        "englishParagraphThenNewlineHebrewStartsAtTheRightContentEdge",
+        "englishParagraphThenNewlineHebrewStaysRightInAnRtlAmbientContext",
+        "wrappedHebrewParagraphThenNewlineEnglishKeepsEachParagraphOnItsSide",
+        "wrappedHebrewDraftKeepsEveryLineAtTheRightInAnRtlAmbientContext",
+        "mixedScriptWithinOneParagraphKeepsItsRightEdge",
+        "typingANewEnglishParagraphAfterHebrewStartsAtTheLeftContentEdge",
     ),
 }
 
-# Pre-fix production code must fail these and nothing else. Every other rendered
-# case is a control and has to keep passing.
+# Pre-fix production code (whole-draft direction) must fail these and nothing
+# else. Every other rendered case is a control and has to keep passing.
 EXPECTED_FAILURES_WHEN_RED = {
-    DESIGNSYSTEM_SUITE: (
-        "shortHebrewParagraphStartsAtTheRightContentEdge",
-        "secondHebrewParagraphStartsAtTheRightContentEdge",
-        "highlightedHebrewParagraphStartsAtTheRightContentEdge",
-        "linkedHebrewParagraphStartsAtTheRightContentEdge",
-        "englishParagraphStaysLeftInAnRtlAmbientContext",
-    ),
     UI_SUITE: (
-        "oneHebrewLetterIsAnchoredAtTheRightContentEdge",
-        "twoHebrewLettersAreAnchoredAtTheRightContentEdge",
-        "shortHebrewDraftIsAnchoredAtTheRightContentEdge",
-        "englishDraftStaysLeftInAnRtlAmbientContext",
+        "hebrewParagraphThenNewlineEnglishStartsAtTheLeftContentEdge",
+        "hebrewParagraphThenNewlineEnglishStaysLeftInAnRtlAmbientContext",
+        "englishParagraphThenNewlineHebrewStartsAtTheRightContentEdge",
+        "englishParagraphThenNewlineHebrewStaysRightInAnRtlAmbientContext",
+        "wrappedHebrewParagraphThenNewlineEnglishKeepsEachParagraphOnItsSide",
+        "typingANewEnglishParagraphAfterHebrewStartsAtTheLeftContentEdge",
     ),
 }
 
 # The pre-existing designsystem + ui host suites independently reviewed as 706
-# unique cases. A regression run below that floor is a broken collection, not a
-# passing suite.
-MIN_REGRESSION_CASES = 706
+# unique cases, plus the 25 rendered cases this harness adds. A regression run
+# below that floor is a broken collection, not a passing suite.
+MIN_REGRESSION_CASES = 714
 
 PASS, FAILURE, ERROR, SKIP = "passed", "failure", "error", "skipped"
 

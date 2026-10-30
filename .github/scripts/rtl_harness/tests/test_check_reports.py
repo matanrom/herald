@@ -96,7 +96,7 @@ class GateHarness(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertIn("verdict: PASS", out)
 
-    def test_red_exact_nine_failures_passes(self) -> None:
+    def test_red_exact_expected_failures_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             focused, regression = build(Path(tmp), "RED")
             code, out = self.run_gate("RED", focused, regression, "1", "1")
@@ -217,7 +217,7 @@ class GateHarness(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             focused, regression = build(Path(tmp), "RED")
             cases = dict(focused_cases("RED")[UI])
-            cases["oneHebrewLetterIsAnchoredAtTheRightContentEdge"] = check_reports.PASS
+            cases["hebrewParagraphThenNewlineEnglishStartsAtTheLeftContentEdge"] = check_reports.PASS
             write_suite(focused / "junit-ui", f"TEST-{UI}.xml", UI, cases)
             code, out = self.run_gate("RED", focused, regression, "1", "1")
             self.assertEqual(code, 1)
