@@ -3,15 +3,15 @@
 # results. Test-only: no secrets, no APK, no lint, no writes outside this job's artifacts.
 #
 # The tests fail on purpose before the production fix (RED) and pass after it (GREEN). Set
-# `revert_fix_sha` on a manual run to revert that commit's production hunks in the checkout and re-run the
-# same tests to prove the fix is load-bearing.
+# `production_revision` on a manual run to swap in another revision's production files and re-run the same
+# tests, proving the fix is load-bearing.
 name: RTL layout harness
 
 on:
   workflow_dispatch:
     inputs:
-      revert_fix_sha:
-        description: "Optional: commit whose changes are reverted before the run (RED re-proof)"
+      production_revision:
+        description: "Optional: revision whose production files replace HEAD's, to re-prove RED"
         required: false
         type: string
   push:
@@ -47,14 +47,17 @@ jobs:
           test -z "$(git status --porcelain)" || { echo "::error::dirty worktree"; git status --porcelain; exit 1; }
           echo "source_sha=$head_sha" >> "$GITHUB_ENV"
 
-      - name: Optional RED re-proof (revert the fix)
-        if: ${{ inputs.revert_fix_sha != '' }}
+      - name: Optional RED re-proof (pre-fix production files)
+        if: ${{ inputs.production_revision != '' }}
         run: |
           set -euo pipefail
-          echo "reverting ${{ inputs.revert_fix_sha }} to re-run the same tests without the fix"
-          git revert --no-commit --no-edit "${{ inputs.revert_fix_sha }}"
+          echo "restoring production files from ${{ inputs.production_revision }} to re-run the same tests without the fix"
+          git checkout "${{ inputs.production_revision }}" -- \
+            shared/ui/src/commonMain/kotlin/dev/hermeskotlin/ui/chat/ChatScreen.kt \
+            shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/MarkdownText.kt \
+            shared/designsystem/src/commonMain/kotlin/dev/hermeskotlin/designsystem/components/BidiText.kt
           git status --short
-          echo "::notice::production fix reverted for this run; the geometry tests must fail"
+          echo "::notice::production fix removed for this run; the geometry tests must fail"
 
       - name: Set up JDK 25
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
