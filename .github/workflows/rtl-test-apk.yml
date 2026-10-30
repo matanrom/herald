@@ -55,6 +55,9 @@ jobs:
           test -z "$(git status --porcelain)" || { echo "::error::dirty worktree"; git status --porcelain; exit 1; }
           # Nothing but this workflow file may separate the build from the source-reviewed revision.
           audited=19f4834f9e63497ac44f266f082ad5ad72038c5c
+          if ! git cat-file -e "${audited}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$audited" >/dev/null 2>&1 || true
+          fi
           if git cat-file -e "${audited}^{commit}" 2>/dev/null; then
             changed="$(git diff --name-only "$audited" HEAD)"
             echo "changed since audited source $audited:"; echo "$changed"
@@ -62,7 +65,8 @@ jobs:
               echo "::error::build differs from the audited source beyond the workflow file"; exit 1; }
             echo "audited_source_sha=$audited" >> "$GITHUB_ENV"
           else
-            echo "::warning::audited revision $audited not in the shallow history"
+            echo "::error::cannot reach the audited revision $audited to prove what was built"
+            exit 1
           fi
           {
             echo "source_sha=$head_sha"
