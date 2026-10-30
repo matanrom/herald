@@ -303,7 +303,7 @@ class ComposerRtlLayoutTest {
 
         // Delete the English paragraph back to the Hebrew one: the Hebrew line keeps the right edge.
         edit {
-            delete(length - ENGLISH_SENTENCE.length - 1, length)
+            replace(length - ENGLISH_SENTENCE.length - 1, length, "")
             selection = TextRange(length)
         }
         assertLineCount("typed-hebrew-after-delete", 1)
