@@ -324,6 +324,7 @@ import dev.hermeskotlin.designsystem.body
 import dev.hermeskotlin.designsystem.bodySmall
 import dev.hermeskotlin.designsystem.caption
 import dev.hermeskotlin.designsystem.colors
+import dev.hermeskotlin.designsystem.components.BidiText
 import dev.hermeskotlin.designsystem.components.Button
 import dev.hermeskotlin.designsystem.components.Tooltip
 import dev.hermeskotlin.designsystem.components.handCursor
@@ -2339,7 +2340,7 @@ internal fun UserBubble(
                         // right just because the prompt as a whole is mostly Hebrew (and the reverse). Content is
                         // per-paragraph, never a single whole-message direction, and it inserts no characters, so
                         // the sent text and what can be selected from it are exactly what was typed.
-                        val promptStyle = Theme[typography][body].copy(textDirection = TextDirection.Content)
+                        val promptStyle = Theme[typography][body].copy(textDirection = BidiText.direction(message.text))
                         when {
                             review != null -> SentReviewContent(review, onBubble)
                             // A mouse selects part of a prompt to copy, as it does a reply; a phone's long press is the menu's.
@@ -3572,7 +3573,7 @@ internal fun ComposerTextInput(
                     // intrinsic-width box anchored on a single side. Propagating the field's width to the
                     // editor gives each paragraph the whole line, and each paragraph's own direction then
                     // puts it at its own side. A paragraph that wraps keeps that side on every line.
-                    Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) { innerTextField() }
+                    Box(Modifier.fillMaxWidth()) { innerTextField() }
                 }
             },
         )
