@@ -40,6 +40,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -74,6 +75,8 @@ data class SessionsUiState(
     val savedCopyAt: Long? = null,
     /** Results for the search box; null while it is empty. */
     val searchResults: List<SessionSummary>? = null,
+    /** The words [searchResults] answer, trimmed; a box typed on since holds results for something else. */
+    val searchedFor: String? = null,
     val searching: Boolean = false,
     /** One-off feedback for a failed row action, cleared by [SessionsViewModel.dismissMessage]. */
     val message: String? = null,
@@ -250,7 +253,7 @@ class SessionsViewModel(
     /** The list is on screen (the sidebar open or docked), or no longer is. */
     fun setVisible(shown: Boolean) {
         visible.value = shown
-        if (shown && _state.value.filter == SessionListFilter.Recent) loadProjects()
+        if (shown && _state.value.filter == SessionListFilter.Recent) loadProjects(force = projectsStale)
     }
 
     val query = TextFieldState()
@@ -440,6 +443,12 @@ class SessionsViewModel(
     /** A change came in while the projects were being asked for; ask once more when that answer is in. */
     private var projectsAgain = false
 
+    /** A change came in while the list was closed; ask at once when it opens, however recently the last ask was. */
+    private var projectsStale = false
+
+    /** The ask put off until [PROJECTS_EVERY_MS] since the last one is over. */
+    private var projectsLater: Job? = null
+
     /**
      * The project list, again, since no event says a chat moved between projects. The gateway groups the
      * newest sessions each time, so this is asked only while the list shows, at most every
@@ -447,9 +456,22 @@ class SessionsViewModel(
      */
     private fun loadProjects(force: Boolean = false) {
         if (connection.state.value !is ConnectionState.Connected) return
-        if (!force && !visible.value && _state.value.projects.isNotEmpty()) return
+        if (!force && !visible.value && _state.value.projects.isNotEmpty()) {
+            projectsStale = true
+            return
+        }
         val now = getTimeMillis()
-        if (!force && now - projectsAskedAt < PROJECTS_EVERY_MS) return
+        val wait = projectsAskedAt + PROJECTS_EVERY_MS - now
+        if (!force && wait > 0) {
+            // Too soon to ask again, but the change still counts: ask once the wait is over.
+            if (projectsLater?.isActive != true) projectsLater = viewModelScope.launch {
+                delay(wait)
+                if (visible.value) loadProjects(force = true) else projectsStale = true
+            }
+            return
+        }
+        projectsStale = false
+        projectsLater?.cancel()
         if (projectsJob?.isActive == true) {
             projectsAgain = true
             return
@@ -553,9 +575,11 @@ class SessionsViewModel(
      *  leaving it set would bounce the next mount after a fresh sign-in. */
     fun consumeSessionExpired() = _state.update { it.copy(sessionExpired = false) }
 
-    fun rename(session: SessionSummary, title: String) = mutate(
+    /** [onRenamed] runs once the gateway has taken the new title. */
+    fun rename(session: SessionSummary, title: String, onRenamed: () -> Unit = {}) = mutate(
         apply = { list -> list.map { if (it.id == session.id) it.copy(title = title.ifBlank { null }) else it } },
         call = { url, profile -> api.rename(url, session.id, title.trim(), profile) },
+        onSuccess = { onRenamed() },
     )
 
     fun togglePinned(session: SessionSummary) = mutate(
@@ -822,16 +846,17 @@ class SessionsViewModel(
                 .collectLatest { q ->
                     val url = gateway?.gatewayUrl
                     if (q == null || url == null) {
-                        _state.update { it.copy(searchResults = null, searching = false) }
+                        _state.update { it.copy(searchResults = null, searchedFor = null, searching = false) }
                         return@collectLatest
                     }
                     _state.update { it.copy(searching = true) }
                     val result = api.search(url, q, profile = profile)
                     _state.update {
                         when (result) {
-                            is ApiResult.Success -> it.copy(searchResults = result.value, searching = false)
+                            is ApiResult.Success -> it.copy(searchResults = result.value, searchedFor = q, searching = false)
                             else -> it.copy(
                                 searchResults = emptyList(),
+                                searchedFor = q,
                                 searching = false,
                                 message = result.errorMessage,
                                 sessionExpired = result.isExpired,
